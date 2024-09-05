@@ -1,0 +1,27 @@
+{
+    "OUTPUT_NAMES": [
+        "6278",
+        "5959"
+    ],
+    "INPUT_NAMES": [
+        "1890",
+        "2887",
+        "2687"
+    ],
+    "MASK_NAMES": [
+        "3311"
+    ],
+    "MLVL_FEATS_NAMES":[
+        "1890"
+    ],
+    "COORDS_PE_NAMES":[
+        "2687"
+    ],
+    "SIN_EMBED_NAMES":[
+        "2887"
+    ],
+    "NUM_SPLITS": 1,
+    "NUM_QUERY": 304,
+    "NUM_TOKENS": 3000,
+    "NUM_HEADS": 8
+}

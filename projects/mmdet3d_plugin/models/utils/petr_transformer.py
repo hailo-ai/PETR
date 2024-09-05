@@ -63,8 +63,8 @@ class PETRTransformer(BaseModule):
         self.batch_norms = None
         if input_norm:
             self.batch_norms = nn.ModuleList([
-                nn.BatchNorm1d(num_features=self.embed_dims),
-                nn.BatchNorm1d(num_features=self.embed_dims)
+                nn.BatchNorm2d(num_features=self.embed_dims),
+                nn.BatchNorm2d(num_features=self.embed_dims)
             ])
 
     def init_weights(self):
@@ -95,16 +95,15 @@ class PETRTransformer(BaseModule):
                 - memory: Output results from encoder, with shape \
                       [bs, embed_dims, h, w].
         """
-        bs, n, c, h, w = x.shape
-        memory = x.permute(1, 3, 4, 0, 2).reshape(-1, bs, c) # [bs, n, c, h, w] -> [n*h*w, bs, c]
-        pos_embed = pos_embed.permute(1, 3, 4, 0, 2).reshape(-1, bs, c) # [bs, n, c, h, w] -> [n*h*w, bs, c]
+        bs = x.size(0)
+        memory = x
         query_embed = query_embed.unsqueeze(1).repeat(
             1, bs, 1)  # [num_query, dim] -> [num_query, bs, dim]
         mask = mask.view(bs, -1)  # [bs, n, h, w] -> [bs, n*h*w]
         target = torch.zeros_like(query_embed)
         if self.batch_norms is not None:
-            pos_embed = self.batch_norms[0].to(pos_embed.device)(pos_embed.permute(1, 2, 0)).permute(2, 0, 1)
-            memory = self.batch_norms[1].to(memory.device)(memory.permute(1, 2, 0)).permute(2, 0, 1)
+            pos_embed = self.batch_norms[0].to(pos_embed.device)(pos_embed).reshape(1, self.embed_dims, -1).permute(2, 0, 1)
+            memory = self.batch_norms[1].to(memory.device)(memory).reshape(1, self.embed_dims, -1).permute(2, 0, 1)
 
         # out_dec: [num_layers, num_query, bs, dim]
         out_dec = self.decoder(
@@ -116,8 +115,7 @@ class PETRTransformer(BaseModule):
             key_padding_mask=mask,
             reg_branch=reg_branch,
             )
-        out_dec = out_dec.transpose(1, 2)
-        memory = memory.reshape(n, h, w, bs, c).permute(3, 0, 4, 1, 2)
+
         return  out_dec, memory
 
 @TRANSFORMER.register_module()
@@ -540,5 +538,5 @@ class PETRTransformerDecoder(TransformerLayerSequence):
                     intermediate.append(self.post_norm(query))
                 else:
                     intermediate.append(query)
-        return torch.stack(intermediate)
+        return intermediate
 

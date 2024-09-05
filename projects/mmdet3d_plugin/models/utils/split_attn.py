@@ -67,13 +67,6 @@ class SplitPETRMultiheadAttention(nn.MultiheadAttention):
     ) -> Tuple[Tensor, Optional[Tensor]]:
 
         num_heads = self.num_heads
-
-        in_proj_weight = self.state_dict()['in_proj_weight']
-        in_proj_bias = self.state_dict()['in_proj_bias']
-        out_proj_weight = self.state_dict()['out_proj.weight']
-        out_proj_bias = self.state_dict()['out_proj.bias']
-
-        
         tgt_len, bsz, embed_dim = query.shape
         src_len, _, _ = key.shape
         head_dim = embed_dim // num_heads
@@ -81,7 +74,7 @@ class SplitPETRMultiheadAttention(nn.MultiheadAttention):
         assert key.shape == value.shape, f"key shape {key.shape} does not match value shape {value.shape}"
         
         # input projection
-        q, k, v = F._in_projection_packed(query, key, value, in_proj_weight, in_proj_bias)
+        q, k, v = F._in_projection_packed(query, key, value, self.in_proj_weight, self.in_proj_bias)
 
         q = q.contiguous()
         k = k.contiguous()
@@ -115,7 +108,7 @@ class SplitPETRMultiheadAttention(nn.MultiheadAttention):
 
         attn_output, attn_output_weights = _split_scaled_dot_product_attention(q_split, k_split, v_split, num_heads, self.num_split, attn_mask, self.dropout)
         attn_output = attn_output.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
-        attn_output = F.linear(attn_output, out_proj_weight, out_proj_bias)
+        attn_output = F.linear(attn_output, self.out_proj.weight, self.out_proj.bias)
         if need_weights:
             # average attention weights over heads
             attn_output_weights = attn_output_weights.view(bsz, num_heads, tgt_len, src_len)

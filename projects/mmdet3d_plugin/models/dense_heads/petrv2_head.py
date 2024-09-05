@@ -240,6 +240,7 @@ class PETRv2Head(AnchorFreeHead):
             f' and {num_feats}.'
         self.act_cfg = transformer.get('act_cfg',
                                        dict(type='ReLU', inplace=True))
+        self.num_pos_feats = num_feats
         self.num_pred = num_pred
         self.normedlinear = normedlinear
         self.with_fpe = with_fpe
@@ -383,9 +384,12 @@ class PETRv2Head(AnchorFreeHead):
         coords_mask = masks | coords_mask.permute(0, 1, 3, 2)
         coords3d = coords3d.permute(0, 1, 4, 5, 3, 2).contiguous().view(B*N, -1, H, W)
         coords3d = inverse_sigmoid(coords3d)
+
+        ch = coords3d.size(1)
+        coords3d = coords3d.permute(1,0,2,3).reshape(B, ch, N,-1)
         coords_position_embeding = self.position_encoder(coords3d)
         
-        return coords_position_embeding.view(B, N, self.embed_dims, H, W), coords_mask
+        return coords_position_embeding, coords_mask  
 
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
                               missing_keys, unexpected_keys, error_msgs):
@@ -433,7 +437,7 @@ class PETRv2Head(AnchorFreeHead):
         """
         
         x = mlvl_feats[self.position_level]
-        batch_size, num_cams = x.size(0), x.size(1)
+        batch_size, num_cams,_ , H, W = x.size()
 
         input_img_h, input_img_w, _ = img_metas[0]['pad_shape'][0]
         masks = x.new_ones(
@@ -443,23 +447,23 @@ class PETRv2Head(AnchorFreeHead):
                 img_h, img_w, _ = img_metas[img_id]['img_shape'][cam_id]
                 masks[img_id, cam_id, :img_h, :img_w] = 0
             
-        x = self.input_proj(x.flatten(0,1))
-        x = x.view(batch_size, num_cams, *x.shape[-3:])
+        x = self.input_proj(x.flatten(0,1).permute(1,0,2,3).reshape(batch_size, self.in_channels, num_cams, -1))
 
         # interpolate masks to have the same spatial shape with x
         masks = F.interpolate(
-            masks, size=x.shape[-2:]).to(torch.bool)
+            masks, size=(H, W)).to(torch.bool)
 
         if self.with_position:
             coords_position_embeding, _ = self.position_embeding(mlvl_feats, img_metas, masks)
             if self.with_fpe:
-                coords_position_embeding = self.fpe(coords_position_embeding.flatten(0,1), x.flatten(0,1)).view(x.size())
+                coords_position_embeding = self.fpe(coords_position_embeding, x)
 
             pos_embed = coords_position_embeding
 
             if self.with_multiview:
                 sin_embed = self.positional_encoding(masks)
-                sin_embed = self.adapt_pos3d(sin_embed.flatten(0, 1)).view(x.size())
+                ch = sin_embed.size(2)
+                sin_embed = self.adapt_pos3d(sin_embed.flatten(0,1).permute(1,0,2,3).reshape(1, ch, num_cams,-1))
                 pos_embed = pos_embed + sin_embed
             else:
                 pos_embeds = []
@@ -482,9 +486,10 @@ class PETRv2Head(AnchorFreeHead):
         
 
         reference_points = self.reference_points.weight
-        query_embeds = self.query_embedding(pos2posemb3d(reference_points))
+        query_embeds = self.query_embedding(pos2posemb3d(reference_points, num_pos_feats=self.num_pos_feats))
         reference_points = reference_points.unsqueeze(0).repeat(batch_size, 1, 1) #.sigmoid()
         outs_dec, _ = self.transformer(x, masks, query_embeds, pos_embed, self.reg_branches)
+        outs_dec = [torch.permute(x, [1,0,2]) for x in outs_dec]
         
         if self.with_time:
             time_stamps = []
@@ -496,7 +501,7 @@ class PETRv2Head(AnchorFreeHead):
         
         outputs_classes = []
         outputs_coords = []
-        for lvl in range(outs_dec.shape[0]):
+        for lvl in range(len(outs_dec)):
             reference = inverse_sigmoid(reference_points.clone())
             assert reference.shape[-1] == 3
             outputs_class = self.cls_branches[lvl](outs_dec[lvl])
