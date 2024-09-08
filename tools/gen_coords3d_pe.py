@@ -62,16 +62,18 @@ def parse_args():
     parser.add_argument('config', help='model config path')
     parser.add_argument('checkpoint', help='checkpoint file')
     parser.add_argument('--img-dims', nargs=2, type=int, default=None, metavar=('height','width'), help='Change input resolution (height, width). Overrides cfg values')
-    parser.add_argument('--calib-set-size', type=int, default=1024, help='calibration set size')
+    parser.add_argument('--num-images', type=int, default=int(1e6), help='How many images to iterate over for data generation')
     parser.add_argument('--save-dir', type=str, default=None, help='Folder to save calibration sets')
     parser.add_argument('--net-name', type=str, default=None, help='Model name')
+    parser.add_argument('--gen-calib-set', action='store_true',
+                        help='Generate NPZ calibration set for transformer holding backbone feature maps and 3d coordinates positional embedding data')
     args = parser.parse_args()
     return args
 
 
 def main(device='cuda:0'):
     args = parse_args()
-    calib_set_size = args.calib_set_size
+    num_images = args.num_images
     cfg = Config.fromfile(args.config)
     cfg.model.pretrained = None
     cfg.model.train_cfg = None
@@ -129,14 +131,19 @@ def main(device='cuda:0'):
     calib_model.eval()
     calib_model.to(device)
 
-    calib_set = {'backbone': [],
-                 'transformer':
-                    {}
-                }
+    gen_calib_set = args.gen_calib_set
+    if gen_calib_set:
+        calib_set = {'backbone': [],
+                     'transformer':
+                        {}
+                    }
     count = 0
     np.random.seed(0)
 
-    for i, data in tqdm(enumerate(data_loader), total=min(calib_set_size, len(data_loader))):
+    work_dir = Path(os.getcwd()) / 'coords3d_positional_embedding' if args.save_dir is None else args.save_dir
+    Path(work_dir).mkdir(parents=True, exist_ok=True)
+
+    for i, data in tqdm(enumerate(data_loader), total=min(num_images, len(data_loader))):
         img_metas = data['img_metas'][0].data[0]
         img = data['img'][0].data[0].to(device)
         bs, num_cams = img.size(0), img.size(1)
@@ -152,49 +159,53 @@ def main(device='cuda:0'):
         # tokens = int((shape[0]/bb_stride) * (shape[1]/bb_stride) * num_cams)
         # embed_dims = cfg.model.pts_bbox_head.transformer.decoder.transformerlayers.attn_cfgs[0].embed_dims
 
-        if count==0:
-            calib_set['backbone'] = np.zeros((calib_set_size, *shape))
-            calib_set['transformer']['mlvl_feats'] = np.zeros((calib_set_size, 
+        if gen_calib_set and count==0:
+            calib_set['backbone'] = np.zeros((num_images, *shape))
+            calib_set['transformer']['mlvl_feats'] = np.zeros((num_images, 
                                                                num_cams,
                                                                int(shape[0]/bb_stride * shape[1]/bb_stride),
                                                                calib_model.pts_bbox_head.in_channels,
                                                                ))
-            calib_set['transformer']['coords_3d_pe'] = np.zeros((calib_set_size, 
+            calib_set['transformer']['coords_3d_pe'] = np.zeros((num_images, 
                                                                  num_cams,
                                                                  int(shape[0]/bb_stride * shape[1]/bb_stride),
                                                                  calib_model.pts_bbox_head.embed_dims,
                                                                  ))
 
         mlvl_feats, coords_3d_pe = calib_model(img_metas=data['img_metas'][0].data, img=data['img'][0].data)
+        mlvl_feats = mlvl_feats.detach().cpu().numpy()
+        coords_3d_pe = coords_3d_pe.detach().cpu().numpy()
 
-        calib_set['backbone'][count] = calib_data
-        calib_set['transformer']['mlvl_feats'][count] = mlvl_feats.detach().cpu().numpy()
-        calib_set['transformer']['coords_3d_pe'][count] = coords_3d_pe.detach().cpu().numpy()
+        if gen_calib_set and count < num_images:
+            calib_set['backbone'][count] = calib_data
+            calib_set['transformer']['mlvl_feats'][count] = mlvl_feats
+            calib_set['transformer']['coords_3d_pe'][count] = coords_3d_pe
+
+        transformer_inputs = {}
+        transformer_inputs['input_layer1'] = mlvl_feats
+        transformer_inputs['input_layer2'] = coords_3d_pe
+
+        coords3d_path = work_dir / f'coords3d_pe_{count}.npy'
+        np.save(coords3d_path, coords_3d_pe.squeeze(0))
 
         count += 1
-        if count == calib_set_size:
+        if count == num_images:
             break
 
-    print('\nFinished')
-
-    work_dir = os.getcwd() if args.save_dir is None else args.save_dir
-    Path(work_dir).mkdir(parents=True, exist_ok=True)
-    suf = Path(args.config).suffix
-    net_name = Path(args.config).name.split(suf)[0]if args.net_name is None else args.net_name
-
-    # Save backbone calibration set
-    calib_backbone_path = os.path.join(work_dir, f'{net_name}_calib_set_backbone_{calib_set_size}.npy')
-    np.save(calib_backbone_path, calib_set['backbone'])
+    print(f'\n 3D coordiantes positional embeddings data saved at {work_dir}')
 
     # Save transformer calibration set
-    calib_set_transformer = {
-        net_name + '/input_layer1': calib_set['transformer']['mlvl_feats'],
-        net_name + '/input_layer2': calib_set['transformer']['coords_3d_pe']
-    }
-    calib_transformer_path = os.path.join(work_dir, f'{net_name}_calib_set_transformer_{calib_set_size}.npz')
-    np.savez(calib_transformer_path, **calib_set_transformer)
+    if gen_calib_set:
+        suf = Path(args.config).suffix
+        net_name = Path(args.config).name.split(suf)[0]if args.net_name is None else args.net_name
+        calib_set_transformer = {
+            net_name + '/input_layer1': calib_set['transformer']['mlvl_feats'],
+            net_name + '/input_layer2': calib_set['transformer']['coords_3d_pe']
+        }
+        calib_transformer_path = work_dir.parent / f'{net_name}_calib_set_transformer_{num_images}.npz'
+        np.savez(calib_transformer_path, **calib_set_transformer)
 
-    print(f"Calibration sets with {count} images saved at:\nBackbone: {calib_backbone_path}\nTransformer: {calib_transformer_path}\n")
+        print(f"Calibration set with {count} images for transformer saved at: {calib_transformer_path}\n")
     return
 
 
@@ -204,11 +215,19 @@ if __name__ == "__main__":
 """
 This script needs to be run from the PETR/ folder, e.g.
 
+*** Generate 3D positional embedding data
 cd /workspace/PETR
 CUDA_VISIBLE_DEVICES=0 python3 tools/gen_calib_set.py
     projects/configs/petrv2/petrv2_fcos3d_repvgg_b0x32_BN_q_304_decoder_3_UN_800x320.py 
     <train.pth>
-    --calib-set-size 64
+    --save-dir <path_to_save_dir>
+
+*** Also generate calibration set for transformer, holding backbone feature maps and 3D positional embedding
+cd /workspace/PETR
+CUDA_VISIBLE_DEVICES=0 python3 tools/gen_calib_set.py
+    projects/configs/petrv2/petrv2_fcos3d_repvgg_b0x32_BN_q_304_decoder_3_UN_800x320.py 
+    <train.pth>
+    --num-images 64
     --save-dir <path_to_save_dir>
     --net-name petrv2_repvggB0_transformer_pp_800x320
 
