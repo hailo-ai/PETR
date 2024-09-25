@@ -1,0 +1,27 @@
+{
+    "OUTPUT_NAMES": [
+        "6266",
+        "5947"
+    ],
+    "INPUT_NAMES": [
+        "1",
+        "2905",
+        "2705"
+    ],
+    "MASK_NAMES": [
+        "3329"
+    ],
+    "MLVL_FEATS_NAMES":[
+        "1"
+    ],
+    "COORDS_PE_NAMES":[
+        "2705"
+    ],
+    "SIN_EMBED_NAMES":[
+        "2905"
+    ],
+    "NUM_SPLITS": 1,
+    "NUM_QUERY": 304,
+    "NUM_TOKENS": 3000,
+    "NUM_HEADS": 8
+}

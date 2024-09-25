@@ -277,13 +277,13 @@ class PETRv2Head(AnchorFreeHead):
 
         cls_branch = []
         for _ in range(self.num_reg_fcs):
-            cls_branch.append(Linear(self.embed_dims, self.embed_dims))
-            cls_branch.append(nn.LayerNorm(self.embed_dims))
+            cls_branch.append(nn.Conv2d(self.embed_dims, self.embed_dims, 1))
+            cls_branch.append(nn.BatchNorm2d(self.embed_dims))
             cls_branch.append(nn.ReLU(inplace=True))
         if self.normedlinear:
             cls_branch.append(NormedLinear(self.embed_dims, self.cls_out_channels))
         else:
-            cls_branch.append(Linear(self.embed_dims, self.cls_out_channels))
+            cls_branch.append(nn.Conv2d(self.embed_dims, self.cls_out_channels, 1))
         fc_cls = nn.Sequential(*cls_branch)
 
         if self.with_multi:
@@ -504,7 +504,9 @@ class PETRv2Head(AnchorFreeHead):
         for lvl in range(len(outs_dec)):
             reference = inverse_sigmoid(reference_points.clone())
             assert reference.shape[-1] == 3
-            outputs_class = self.cls_branches[lvl](outs_dec[lvl])
+            outs_dec_reshaped = outs_dec[lvl].permute(0, 2, 1).view(batch_size, self.embed_dims, batch_size, -1)
+            outputs_class = self.cls_branches[lvl](outs_dec_reshaped)
+            outputs_class = outputs_class.squeeze(0).permute(1, 2, 0)
             tmp = self.reg_branches[lvl](outs_dec[lvl])
 
             tmp[..., 0:2] += reference[..., 0:2]
