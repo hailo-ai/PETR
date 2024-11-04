@@ -140,7 +140,7 @@ def main(device='cuda:0'):
     count = 0
     np.random.seed(0)
 
-    work_dir = Path(os.getcwd()) / 'coords3d_positional_embedding' if args.save_dir is None else args.save_dir
+    work_dir = Path(os.getcwd()) / 'coords3d_positional_embedding' if args.save_dir is None else Path(args.save_dir) / 'coords3d_positional_embedding'
     Path(work_dir).mkdir(parents=True, exist_ok=True)
 
     for i, data in tqdm(enumerate(data_loader), total=min(num_images, len(data_loader))):
@@ -202,6 +202,9 @@ def main(device='cuda:0'):
             net_name + '/input_layer1': calib_set['transformer']['mlvl_feats'],
             net_name + '/input_layer2': calib_set['transformer']['coords_3d_pe']
         }
+        calib_backbone_path = work_dir.parent / f'{net_name}_calib_set_backbone{num_images}.npz'
+        np.save(calib_backbone_path, calib_set['backbone'])
+        
         calib_transformer_path = work_dir.parent / f'{net_name}_calib_set_transformer_{num_images}.npz'
         np.savez(calib_transformer_path, **calib_set_transformer)
 
@@ -217,18 +220,19 @@ This script needs to be run from the PETR/ folder, e.g.
 
 *** Generate 3D positional embedding data
 cd /workspace/PETR
-CUDA_VISIBLE_DEVICES=0 python3 tools/gen_calib_set.py
+CUDA_VISIBLE_DEVICES=0 python3 tools/gen_coords3d_pe.py
     projects/configs/petrv2/petrv2_fcos3d_repvgg_b0x32_BN_q_304_decoder_3_UN_800x320.py 
     <train.pth>
     --save-dir <path_to_save_dir>
 
-*** Also generate calibration set for transformer, holding backbone feature maps and 3D positional embedding
+*** Also generate calibration set for transformer, holding backbone feature maps and 3D positional embedding, and backone
 cd /workspace/PETR
-CUDA_VISIBLE_DEVICES=0 python3 tools/gen_calib_set.py
+CUDA_VISIBLE_DEVICES=0 python3 tools/gen_coords3d_pe.py
     projects/configs/petrv2/petrv2_fcos3d_repvgg_b0x32_BN_q_304_decoder_3_UN_800x320.py 
     <train.pth>
     --num-images 64
     --save-dir <path_to_save_dir>
     --net-name petrv2_repvggB0_transformer_pp_800x320
+    --gen-calib-set
 
 """

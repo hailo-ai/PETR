@@ -53,7 +53,7 @@ class Petr3D_Split(Petr3D):
             x = self.pts_bbox_head.input_proj(x.flatten(0,1))
             return x
         elif self.petr_version == 'v2':
-            return img_feats
+            return img_feats[self.pts_bbox_head.position_level]
         else:
             raise ValueError(f"Unsupported {self.petr_version} PETR version. Valid values are {self.petr_version_choices}")
 
